@@ -1,12 +1,16 @@
 """Business use cases for the wallet app."""
 
-from __future__ import annotations
-
 from datetime import datetime
 
 from valutatrade_hub.core import utils
+from valutatrade_hub.core.currencies import get_currency
+from valutatrade_hub.core.exceptions import (
+    ApiRequestError,
+    InsufficientFundsError,
+)
 from valutatrade_hub.core.models import Portfolio, User, Wallet
 from valutatrade_hub.decorators import log_action
+from valutatrade_hub.infra.settings import SettingsLoader
 
 _current_user: User | None = None
 
@@ -83,8 +87,44 @@ def _save_portfolio(portfolio: Portfolio) -> None:
     _save_portfolios(items)
 
 
+def _is_stale(updated_at: str, ttl: int) -> bool:
+    try:
+        ts = datetime.fromisoformat(updated_at)
+    except ValueError:
+        return True
+    return (datetime.now() - ts).total_seconds() > ttl
+
+
+def _refresh_rates_stub(raw: dict) -> dict:
+    """Учебный stub: курсы те же, обновляем метки времени."""
+    now = datetime.now().replace(microsecond=0).isoformat()
+    for key, value in list(raw.items()):
+        if isinstance(value, dict) and "rate" in value:
+            value["updated_at"] = now
+    raw["last_refresh"] = now
+    raw["source"] = "stub-refresh"
+    utils.save_json(utils.rates_path(), raw)
+    return raw
+
+
+def _load_rates_raw() -> dict:
+    settings = SettingsLoader()
+    ttl = int(settings.get("rates_ttl_seconds", 300))
+    raw = utils.load_json(utils.rates_path(), {})
+    if not raw:
+        raise ApiRequestError("файл курсов пуст или недоступен")
+
+    last = raw.get("last_refresh")
+    if last is None or _is_stale(str(last), ttl):
+        try:
+            raw = _refresh_rates_stub(raw)
+        except OSError as exc:
+            raise ApiRequestError(str(exc)) from exc
+    return raw
+
+
 def _rates_to_usd_map() -> dict[str, float]:
-    rates = utils.load_json(utils.rates_path(), {})
+    rates = _load_rates_raw()
     result = {"USD": 1.0}
     for key, value in rates.items():
         if not isinstance(value, dict) or "rate" not in value:
@@ -93,6 +133,13 @@ def _rates_to_usd_map() -> dict[str, float]:
             code = key[: -len("_USD")]
             result[code] = float(value["rate"])
     return result
+
+
+def _require_known_currency(code: str) -> str:
+    """Формат + реестр валют (CurrencyNotFoundError из get_currency)."""
+    normalized = utils.validate_currency_code(code)
+    get_currency(normalized)
+    return normalized
 
 
 def register(username: str, password: str) -> str:
@@ -138,7 +185,7 @@ def login(username: str, password: str) -> str:
 
 def show_portfolio(base: str = "USD") -> str:
     user = require_login()
-    base_code = utils.validate_currency_code(base)
+    base_code = _require_known_currency(base)
     rates = _rates_to_usd_map()
     if base_code not in rates:
         raise ValueError(f"Неизвестная базовая валюта '{base}'")
@@ -164,11 +211,11 @@ def show_portfolio(base: str = "USD") -> str:
 @log_action("buy")
 def buy(currency: str, amount: float) -> str:
     user = require_login()
-    code = utils.validate_currency_code(currency)
+    code = _require_known_currency(currency)
     qty = utils.validate_amount(amount)
     rates = _rates_to_usd_map()
     if code not in rates:
-        raise ValueError(f"Не удалось получить курс для {code}→USD")
+        raise ApiRequestError(f"нет курса для {code}->USD")
 
     portfolio = _get_portfolio(user.user_id)
     if code not in portfolio.wallets:
@@ -183,10 +230,7 @@ def buy(currency: str, amount: float) -> str:
 
     if code != "USD":
         if usd_wallet.balance < cost_usd:
-            raise ValueError(
-                f"Недостаточно средств: доступно {usd_wallet.balance:.4f} USD, "
-                f"требуется {cost_usd:.4f} USD"
-            )
+            raise InsufficientFundsError(usd_wallet.balance, cost_usd, "USD")
         usd_wallet.withdraw(cost_usd)
     portfolio.get_wallet(code).deposit(qty)
     after = portfolio.get_wallet(code).balance
@@ -202,11 +246,11 @@ def buy(currency: str, amount: float) -> str:
 @log_action("sell")
 def sell(currency: str, amount: float) -> str:
     user = require_login()
-    code = utils.validate_currency_code(currency)
+    code = _require_known_currency(currency)
     qty = utils.validate_amount(amount)
     rates = _rates_to_usd_map()
     if code not in rates:
-        raise ValueError(f"Не удалось получить курс для {code}→USD")
+        raise ApiRequestError(f"нет курса для {code}->USD")
 
     portfolio = _get_portfolio(user.user_id)
     if code not in portfolio.wallets:
@@ -218,10 +262,7 @@ def sell(currency: str, amount: float) -> str:
     wallet = portfolio.get_wallet(code)
     before = wallet.balance
     if qty > before:
-        raise ValueError(
-            f"Недостаточно средств: доступно {before:.4f} {code}, "
-            f"требуется {qty:.4f} {code}"
-        )
+        raise InsufficientFundsError(before, qty, code)
 
     rate = rates[code]
     revenue = qty * rate if code != "USD" else qty
@@ -242,11 +283,11 @@ def sell(currency: str, amount: float) -> str:
 
 
 def get_rate(from_currency: str, to_currency: str) -> str:
-    src = utils.validate_currency_code(from_currency)
-    dst = utils.validate_currency_code(to_currency)
+    src = _require_known_currency(from_currency)
+    dst = _require_known_currency(to_currency)
     rates = _rates_to_usd_map()
     if src not in rates or dst not in rates:
-        raise ValueError(f"Курс {src}→{dst} недоступен. Повторите попытку позже.")
+        raise ApiRequestError(f"курс {src}->{dst} недоступен")
 
     # 1 SRC in DST: (SRC in USD) / (DST in USD)
     src_usd = rates[src]

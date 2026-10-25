@@ -5,6 +5,11 @@ from __future__ import annotations
 import shlex
 
 from valutatrade_hub.core import usecases
+from valutatrade_hub.core.exceptions import (
+    ApiRequestError,
+    CurrencyNotFoundError,
+    InsufficientFundsError,
+)
 
 
 def _parse_args(argv: list[str]) -> dict[str, str]:
@@ -60,7 +65,6 @@ def _handle(command: str, args: dict[str, str]) -> str:
         )
     raise ValueError(f"Неизвестная команда: {command}")
 
-
 def main() -> None:
     print("ValutaTrade Hub. Введите help или exit.")
     while True:
@@ -79,7 +83,15 @@ def main() -> None:
             command, *rest = parts
             message = _handle(command, _parse_args(rest))
             print(message)
-        except Exception as exc:  # noqa: BLE001 - CLI показывает любую ошибку пользователю
+        except (
+            InsufficientFundsError,
+            CurrencyNotFoundError,
+            ApiRequestError,
+            ValueError,
+            PermissionError,
+        ) as exc:
+            print(exc)
+        except Exception as exc:  # noqa: BLE001
             print(exc)
 
 
