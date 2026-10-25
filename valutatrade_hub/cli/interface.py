@@ -52,9 +52,11 @@ def _handle(command: str, args: dict[str, str]) -> str:
         if "from" not in args or "to" not in args:
             raise ValueError("Нужны --from и --to")
         return usecases.get_rate(args["from"], args["to"])
+    if command == "update-rates":
+        return usecases.update_rates()
     if command in {"help", "?"}:
         return (
-            "Команды: register, login, show-portfolio, buy, sell, get-rate, exit\n"
+            "Команды: register, login, show-portfolio, buy, sell, get-rate, update-rates, exit\n"
             "Примеры:\n"
             "  register --username alice --password 1234\n"
             "  login --username alice --password 1234\n"

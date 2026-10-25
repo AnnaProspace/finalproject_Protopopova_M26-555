@@ -2,6 +2,8 @@
 
 from datetime import datetime
 
+from prettytable import PrettyTable
+
 from valutatrade_hub.core import utils
 from valutatrade_hub.core.currencies import get_currency
 from valutatrade_hub.core.exceptions import (
@@ -107,7 +109,7 @@ def _refresh_rates_stub(raw: dict) -> dict:
     return raw
 
 
-def _load_rates_raw() -> dict:
+def _load_rates_raw(*, refresh_if_stale: bool = False) -> dict:
     settings = SettingsLoader()
     ttl = int(settings.get("rates_ttl_seconds", 300))
     raw = utils.load_json(utils.rates_path(), {})
@@ -116,6 +118,10 @@ def _load_rates_raw() -> dict:
 
     last = raw.get("last_refresh")
     if last is None or _is_stale(str(last), ttl):
+        if not refresh_if_stale:
+            raise ApiRequestError(
+                "курсы устарели (TTL). Выполните команду: update-rates"
+            )
         try:
             raw = _refresh_rates_stub(raw)
         except OSError as exc:
@@ -194,20 +200,24 @@ def show_portfolio(base: str = "USD") -> str:
     if not portfolio.wallets:
         return f"Портфель пользователя '{user.username}' пуст."
 
-    lines = [f"Портфель пользователя '{user.username}' (база: {base_code}):"]
+    table = PrettyTable()
+    table.field_names = ["Валюта", "Баланс", f"В {base_code}"]
+    table.align = "r"
+    table.align["Валюта"] = "l"
+
     total = portfolio.get_total_value(base_code, rates)
     for code, wallet in sorted(portfolio.wallets.items()):
         if code == "USD":
             value_usd = wallet.balance
         else:
             value_usd = wallet.balance * rates[code]
-        value_base = value_usd if base_code == "USD" else value_usd / rates[base_code]
-        lines.append(
-            f"- {code}: {wallet.balance:.4f}  → {value_base:.2f} {base_code}"
+        value_base = (
+            value_usd if base_code == "USD" else value_usd / rates[base_code]
         )
-    lines.append("---------------------------------")
-    lines.append(f"ИТОГО: {total:,.2f} {base_code}")
-    return "\n".join(lines)
+        table.add_row([code, f"{wallet.balance:.4f}", f"{value_base:.2f}"])
+
+    header = f"Портфель пользователя '{user.username}' (база: {base_code}):"
+    return f"{header}\n{table}\nИТОГО: {total:,.2f} {base_code}"
 @log_action("buy")
 def buy(currency: str, amount: float) -> str:
     user = require_login()
@@ -281,7 +291,6 @@ def sell(currency: str, amount: float) -> str:
         f"Оценочная выручка: {revenue:,.2f} USD"
     )
 
-
 def get_rate(from_currency: str, to_currency: str) -> str:
     src = _require_known_currency(from_currency)
     dst = _require_known_currency(to_currency)
@@ -289,7 +298,6 @@ def get_rate(from_currency: str, to_currency: str) -> str:
     if src not in rates or dst not in rates:
         raise ApiRequestError(f"курс {src}->{dst} недоступен")
 
-    # 1 SRC in DST: (SRC in USD) / (DST in USD)
     src_usd = rates[src]
     dst_usd = rates[dst]
     direct = src_usd / dst_usd
@@ -299,4 +307,16 @@ def get_rate(from_currency: str, to_currency: str) -> str:
     return (
         f"Курс {src}→{dst}: {direct:.8f} (обновлено: {updated})\n"
         f"Обратный курс {dst}→{src}: {reverse:.8f}"
+    )
+
+
+def update_rates() -> str:
+    """Обновить кэш курсов (stub; позже — Parser Service)."""
+    raw = utils.load_json(utils.rates_path(), {})
+    if not raw:
+        raise ApiRequestError("файл курсов пуст или недоступен")
+    raw = _refresh_rates_stub(raw)
+    return (
+        f"Курсы обновлены (source={raw.get('source')}). "
+        f"last_refresh={raw.get('last_refresh')}"
     )
