@@ -56,7 +56,8 @@ def _handle(command: str, args: dict[str, str]) -> str:
         return usecases.update_rates()
     if command in {"help", "?"}:
         return (
-            "Команды: register, login, show-portfolio, buy, sell, get-rate, update-rates, exit\n"
+            "Команды: register, login, show-portfolio, buy,  sell,\n"
+            "  get-rate, update-rates, exit\n"
             "Примеры:\n"
             "  register --username alice --password 1234\n"
             "  login --username alice --password 1234\n"
