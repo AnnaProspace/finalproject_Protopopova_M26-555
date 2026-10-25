@@ -1,0 +1,34 @@
+[project]
+name = "finalproject-protopopova-m26-555"
+version = "0.1.0"
+description = "Currency wallet console application (ValutaTrade Hub)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "prettytable",
+]
+
+[project.scripts]
+finalproject-wallet = "valutatrade_hub.cli.interface:main"
+
+[build-system]
+requires = ["uv_build>=0.12.23,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "valutatrade_hub"
+module-root = ""
+
+[dependency-groups]
+dev = [
+    "ruff>=0.16.10",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+exclude = ["venv", ".venv", "dist", "__pycache__"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = []
