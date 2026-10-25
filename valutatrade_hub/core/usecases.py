@@ -6,6 +6,7 @@ from datetime import datetime
 
 from valutatrade_hub.core import utils
 from valutatrade_hub.core.models import Portfolio, User, Wallet
+from valutatrade_hub.decorators import log_action
 
 _current_user: User | None = None
 
@@ -160,8 +161,7 @@ def show_portfolio(base: str = "USD") -> str:
     lines.append("---------------------------------")
     lines.append(f"ИТОГО: {total:,.2f} {base_code}")
     return "\n".join(lines)
-
-
+@log_action("buy")
 def buy(currency: str, amount: float) -> str:
     user = require_login()
     code = utils.validate_currency_code(currency)
@@ -199,7 +199,7 @@ def buy(currency: str, amount: float) -> str:
         f"Оценочная стоимость покупки: {cost_usd:,.2f} USD"
     )
 
-
+@log_action("sell")
 def sell(currency: str, amount: float) -> str:
     user = require_login()
     code = utils.validate_currency_code(currency)
